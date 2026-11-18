@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AURORA PACIFICA — 30 Days Timelapse at Sea</title>
+<meta name="description" content="WebGPU FFT-ocean container ship timelapse: Red Sea to Hong Kong from the bridge.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='24' font-size='22'>🚢</text></svg>">
+<style>
+  :root{
+    --ink:#e8f1f8; --dim:#9fb4c6; --accent:#57c8f2; --amber:#f5b95e;
+    --glass:rgba(8,14,22,.58); --glass2:rgba(10,20,32,.78); --line:rgba(150,190,220,.22);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:#04070c;color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-user-select:none;user-select:none}
+  #app{position:fixed;inset:0}
+  #app canvas{display:block;width:100%;height:100%;touch-action:none}
+  .vignette{position:fixed;inset:0;pointer-events:none;z-index:3;
+    background:radial-gradient(ellipse at 50% 42%,transparent 58%,rgba(0,0,0,.38) 100%)}
+  [hidden]{display:none!important}
+
+  /* ---------- loader ---------- */
+  #loader{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(180deg,#071120 0%,#0a1c30 55%,#0d2438 100%);
+    transition:opacity .9s ease}
+  #loader.done{opacity:0;pointer-events:none}
+  .loadCard{width:min(560px,88vw);text-align:center}
+  .loadCard h1{font-size:clamp(22px,4vw,34px);letter-spacing:.22em;font-weight:700}
+  .loadCard .sub{color:var(--dim);letter-spacing:.3em;font-size:12px;margin:10px 0 26px;text-transform:uppercase}
+  .barWrap{height:4px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
+  #loadBar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#9fe3ff);transition:width .25s}
+  #loadPhase{color:var(--dim);font-size:13px;margin-top:12px;min-height:18px}
+  .loadCard .tip{color:#6e8599;font-size:12px;margin-top:22px;line-height:1.7}
+
+  /* ---------- HUD shared ---------- */
+  .hud{position:fixed;z-index:10;transition:opacity .35s ease}
+  body.uiHidden .hud{opacity:0;pointer-events:none}
+  .panel{background:var(--glass);border:1px solid var(--line);border-radius:12px;
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  button,.btn{appearance:none;border:1px solid var(--line);background:rgba(20,36,54,.6);
+    color:var(--ink);border-radius:8px;padding:7px 12px;font-size:12.5px;cursor:pointer;
+    letter-spacing:.04em;transition:background .15s,border-color .15s}
+  button:hover{background:rgba(38,66,96,.75)}
+  button.on{background:rgba(37,110,156,.8);border-color:var(--accent)}
+  select{background:rgba(20,36,54,.85);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:6px 8px;font-size:12.5px;width:100%}
+  input[type=range]{width:100%;accent-color:var(--accent);height:22px;cursor:pointer;background:transparent}
+  label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+    display:flex;justify-content:space-between;gap:8px;margin:10px 0 2px}
+  label output{color:var(--ink);letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
+  label .autoTag{cursor:pointer;color:var(--accent);border:1px solid var(--line);
+    border-radius:5px;padding:0 5px;font-size:10px}
+  label .autoTag.manual{color:var(--amber)}
+
+  /* ---------- top-left voyage data ---------- */
+  #voyageHud{top:16px;left:16px;padding:12px 16px;min-width:250px}
+  #voyageHud .ship{font-size:13px;letter-spacing:.24em;font-weight:700}
+  #voyageHud .leg{font-size:17px;margin:5px 0 2px}
+  #voyageHud .meta{color:var(--dim);font-size:12px;line-height:1.65;font-variant-numeric:tabular-nums}
+  #voyageHud .wx{color:var(--amber);font-size:12px;margin-top:5px}
+
+  /* ---------- top-right actions ---------- */
+  #actions{top:16px;right:16px;display:flex;gap:8px}
+
+  /* ---------- bottom transport ---------- */
+  #transport{left:50%;transform:translateX(-50%);bottom:16px;width:min(1060px,94vw);
+    padding:12px 16px 10px}
+  #transport .row{display:flex;align-items:center;gap:10px}
+  #transport .row+.row{margin-top:8px}
+  #playBtn{font-size:13px;min-width:66px;height:36px;padding:0 10px}
+  #scrub{flex:1}
+  #dayReadout{font-size:12px;color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+  #speedCtl{display:flex;align-items:center;gap:8px;flex:0 0 300px}
+  #speedCtl span{font-size:11px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase}
+  #speedCtl output{white-space:nowrap;font-size:12px;min-width:118px}
+  #legTicks{position:relative;height:14px;margin:1px 2px 0}
+  #legTicks i{position:absolute;top:0;transform:translateX(-50%);font-style:normal;
+    font-size:9.5px;color:#7e97ab;letter-spacing:.06em;white-space:nowrap}
+  .cams{display:flex;gap:6px;flex-wrap:wrap}
+  .cams button{flex:1;min-width:82px}
+
+  /* ---------- tweak panel ---------- */
+  #tweaks{top:64px;right:16px;width:288px;padding:6px 16px 14px;max-height:calc(100vh - 190px);
+    overflow-y:auto;background:var(--glass2);overscroll-behavior:contain;scrollbar-width:thin}
+  #tweaks::-webkit-scrollbar{width:8px}
+  #tweaks::-webkit-scrollbar-thumb{background:rgba(130,180,220,.45);border-radius:4px}
+  #tweaks h3{font-size:11px;letter-spacing:.22em;color:var(--accent);margin:14px 0 2px;text-transform:uppercase}
+  #tweaks .check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink);
+    text-transform:none;letter-spacing:.02em;margin:8px 0;cursor:pointer}
+  #tweaks .check input{accent-color:var(--accent)}
+  #stats{font-size:11.5px;color:var(--dim);line-height:1.7;margin-top:10px;
+    border-top:1px solid var(--line);padding-top:8px;font-variant-numeric:tabular-nums}
+
+  #hint{right:16px;bottom:16px;font-size:11px;color:#7e97ab;text-align:right;line-height:1.7}
+  #errBox{position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:60;max-width:min(760px,92vw);
+    background:rgba(64,12,14,.92);border:1px solid #ff7a72;color:#ffd9d5;border-radius:10px;
+    padding:12px 16px;font-size:13px;line-height:1.55;white-space:pre-wrap}
+  @media (max-width:760px){
+    #voyageHud{top:10px;left:10px;min-width:0;max-width:74vw;padding:8px 11px}
+    #voyageHud .ship{font-size:11px;letter-spacing:.16em}
+    #voyageHud .leg{font-size:14px}
+    #voyageHud .meta{font-size:11px;line-height:1.5}
+    #actions{top:10px;right:10px;flex-direction:column;gap:6px}
+    #actions button{padding:6px 9px;font-size:11px}
+    #tweaks{top:10px;right:10px;width:min(300px,88vw);max-height:calc(100vh - 175px)}
+    #transport{bottom:10px;width:96vw;padding:9px 11px 8px}
+    #legTicks{display:none}
+    #speedCtl{display:none}
+    #hint{display:none}
+    .cams{flex-wrap:nowrap;overflow-x:auto}
+    .cams button{min-width:76px;font-size:11px;padding:7px 4px}
+    #dayReadout{font-size:11px}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="vignette"></div>
+
+<div id="loader">
+  <div class="loadCard">
+    <h1>AURORA PACIFICA</h1>
+    <div class="sub">30 days timelapse at sea · Red Sea → Hong Kong</div>
+    <div class="barWrap"><div id="loadBar"></div></div>
+    <div id="loadPhase">Initialising WebGPU…</div>
+    <div class="tip">Baking the FFT ocean spectrum and cloud volume on your GPU machine.<br>
+      Best in Chrome/Edge with WebGPU enabled · headphones + fullscreen recommended.</div>
+  </div>
+</div>
+
+<div id="voyageHud" class="hud panel">
+  <div class="ship">AURORA PACIFICA · ULCS</div>
+  <div class="leg" id="hudLeg">Red Sea</div>
+  <div class="meta" id="hudMeta">—</div>
+  <div class="wx" id="hudWx">—</div>
+</div>
+
+<div id="actions" class="hud">
+  <button id="audioBtn" title="Ambient sound (procedural)">Sound</button>
+  <button id="tweakBtn" title="Sea, weather and quality controls">Tweaks</button>
+  <button id="fsBtn" title="Fullscreen (F)">Fullscreen</button>
+  <button id="hideBtn" title="Hide interface (H) — tap the view to bring it back">Hide UI</button>
+</div>
+
+<aside id="tweaks" class="hud panel" hidden>
+  <h3>Weather</h3>
+  <select id="presetSel">
+    <option value="auto">Auto — follows the voyage</option>
+    <option value="calm">Calm</option>
+    <option value="trade">Trade winds</option>
+    <option value="squall">Squall</option>
+    <option value="storm">Storm</option>
+    <option value="overcast">Overcast</option>
+    <option value="fog">Fog</option>
+  </select>
+  <label>Sea state <span><output id="seaOut">—</output> <span class="autoTag" id="seaAuto">AUTO</span></span></label>
+  <input type="range" id="seaSlider" min="0.5" max="9" step="0.1" value="3">
+  <label>Cloud cover <span><output id="cloudOut">—</output> <span class="autoTag" id="cloudAuto">AUTO</span></span></label>
+  <input type="range" id="cloudSlider" min="0" max="1" step="0.01" value="0.35">
+  <label>Wind <span><output id="windOut">—</output> <span class="autoTag" id="windAuto">AUTO</span></span></label>
+  <input type="range" id="windSlider" min="0" max="55" step="1" value="14">
+
+  <h3>Sea &amp; view</h3>
+  <label>Wave height <output id="waveOut">1.00×</output></label>
+  <input type="range" id="waveSlider" min="0.2" max="2.2" step="0.05" value="1">
+  <label>Foam <output id="foamOut">1.00×</output></label>
+  <input type="range" id="foamSlider" min="0" max="2" step="0.05" value="1">
+  <label>Camera stabilisation <output id="stabOut">20%</output></label>
+  <input type="range" id="stabSlider" min="0" max="1" step="0.01" value="0.2">
+  <label>Exposure <output id="expOut">1.05</output></label>
+  <input type="range" id="expSlider" min="0.5" max="1.9" step="0.01" value="1.05">
+  <label>Field of view <output id="fovOut">58°</output></label>
+  <input type="range" id="fovSlider" min="28" max="75" step="1" value="58">
+
+  <h3>Quality — 3080 / 4K</h3>
+  <select id="qualitySel">
+    <option value="cinematic">Cinematic — full res, 32 cloud steps</option>
+    <option value="balanced">Balanced — 75% res, 22 steps</option>
+    <option value="performance">Performance — 55% res, 14 steps</option>
+  </select>
+  <label class="check"><input type="checkbox" id="bloomChk" checked> Bloom (sun &amp; nav lights)</label>
+  <label class="check"><input type="checkbox" id="trafficChk" checked> Traffic (AIS)</label>
+  <label class="check"><input type="checkbox" id="rainChk" checked> Rain streaks</label>
+  <label class="check"><input type="checkbox" id="linkChk"> True timelapse sea (waves race too)</label>
+  <div id="stats">—</div>
+</aside>
+
+<div id="transport" class="hud panel">
+  <div class="row">
+    <button id="playBtn" title="Play / pause (Space)">Pause</button>
+    <input type="range" id="scrub" min="0" max="30" step="0.002" value="10.06">
+    <div id="dayReadout">Day 1 · —</div>
+  </div>
+  <div id="legTicks"></div>
+  <div class="row">
+    <div class="cams" id="camBtns">
+      <button data-cam="bridge" class="on">Bridge [1]</button>
+      <button data-cam="wing">Wing [2]</button>
+      <button data-cam="bow">Bow [3]</button>
+      <button data-cam="stern">Stern [4]</button>
+      <button data-cam="drone">Drone [5]</button>
+    </div>
+    <div id="speedCtl">
+      <span>Speed</span>
+      <input type="range" id="speedSlider" min="0" max="100" step="1" value="62">
+      <output id="speedOut">1200×</output>
+    </div>
+    <button id="rtBtn" title="Toggle real-time cruising">Real-time</button>
+  </div>
+</div>
+
+<div id="hint" class="hud">drag&nbsp;·&nbsp;look&nbsp;&nbsp; wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp; H&nbsp;·&nbsp;hide UI&nbsp;&nbsp; F&nbsp;·&nbsp;fullscreen</div>
+<div id="errBox" hidden></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.webgpu.js",
+  "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.webgpu.js",
+  "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.tsl.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

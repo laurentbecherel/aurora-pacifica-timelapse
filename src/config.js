@@ -1,0 +1,34 @@
+// Shared configuration: quality tiers & default experience state.
+export const QUALITY = {
+  cinematic:   { label: 'Cinematic (3080 · 4K)', renderScale: 1.0,  cloudSteps: 32, bloom: true,  rainCount: 7000 },
+  balanced:    { label: 'Balanced',              renderScale: 0.75, cloudSteps: 22, bloom: true,  rainCount: 4500 },
+  performance: { label: 'Performance',           renderScale: 0.55, cloudSteps: 14, bloom: false, rainCount: 2500 },
+};
+
+export const DEFAULT_STATE = {
+  playing: true,
+  timeScale: 1200,          // sim-seconds per real second (timelapse)
+  voyageDay: 10.06,         // Colombo approach dawn, sun dead ahead (verified in tests)
+  camera: 'bridge',
+  preset: 'auto',
+  manual: { sea: null, cloud: null, windKt: null },
+  waveScale: 1.0,           // user multiplier on significant wave height
+  foam: 1.0,
+  exposure: 1.05,
+  stabilize: 0.2,           // 0 ship-fixed horizon .. 1 fully level
+  fov: 58,
+  quality: 'cinematic',
+  bloom: true,
+  traffic: true,
+  rainFx: true,
+  linkSeaClock: false,      // true: waves also race in timelapse
+  audio: false,
+};
+
+// Cloud look per weather cloudType: base/thickness (m) + profile vector
+// (bottomSoft, topSoft, densityMul, detailAmt).
+export const CLOUD_TYPES = [
+  { base: 820,  thick: 980,  profile: [0.12, 0.82, 1.0, 0.6] },   // cumulus
+  { base: 620,  thick: 330,  profile: [0.10, 0.72, 0.85, 0.25] }, // stratus
+  { base: 500,  thick: 1700, profile: [0.10, 0.75, 1.5, 0.7] },   // storm towers
+];
