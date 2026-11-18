@@ -11,6 +11,7 @@ import { sunPosition, moonPosition, enuDirToShipFrame, enuOffsetToShipFrame } fr
 import { sampleWeather, lightningPulse } from './sim/weather.js';
 import { buildTraffic, trafficAt } from './sim/traffic.js';
 import { motionAt, significantHeightM, BAKE_HS_M } from './sim/shipMotion.js';
+import { swellHeight } from './sim/swell.js';
 import { createSkyUniforms, createSkyDome, makePlaceholderVolume } from './gfx/sky.js';
 import { createOcean, makePlaceholderAtlas, ATLAS_FRAMES, ATLAS_PERIOD } from './gfx/ocean.js';
 import { buildShip, SHIP } from './gfx/ship.js';
@@ -45,6 +46,11 @@ scene.add(camera);
 
 const sunLight = new THREE.DirectionalLight(0xffffff, 3);
 sunLight.castShadow = true;
+// Never toggle castShadow at runtime: three r180 recreates the light's
+// ShadowNode on light-state changes and its shadowMap starts null, which
+// can crash a frame with "reading 'depthTexture' of null" on real GPUs.
+// Gate the shadow pass cost through autoUpdate/needsUpdate instead.
+sunLight.shadow.autoUpdate = false;
 sunLight.shadow.mapSize.set(2048, 2048);
 Object.assign(sunLight.shadow.camera, { left: -210, right: 210, top: 210, bottom: -210, near: 50, far: 1800 });
 sunLight.shadow.bias = -0.0006;
@@ -191,6 +197,7 @@ const oceanOff = [new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2()]
 const OCT_TILES_JS = [340, 76, 10];
 let smoothedSea = 3, smoothedLightning = 0, lastThunderPulse = 0;
 let seaTime = 0, elapsed = 0, fftBlendStart = -1;
+let travelM = 0, prevBowH = 0, bowVelSm = 0;
 
 // ENU direction of a compass course -> ship-frame rotation helpers.
 function courseRotY(courseDeg, headingDeg) {
@@ -268,7 +275,7 @@ function updateWorld(dt) {
   sunLight.color.copy(useMoon ? _c2.setRGB(0.62, 0.7, 0.9) : _c1);
   sunLight.intensity = useMoon ? 0.35 * moonI + 0.02
     : (Math.pow(sunVis, 0.7) * 3.1 + pal.duskF * 0.25) * cloudDim;
-  sunLight.castShadow = sunLight.intensity > 0.04;
+  sunLight.shadow.needsUpdate = sunLight.intensity > 0.04;
   hemi.color.copy(skyU.ambient.value).multiplyScalar(2.4);
   hemi.groundColor.copy(skyU.fogColor.value).multiplyScalar(0.7);
   hemi.intensity = 0.35 + pal.dayF * 0.7 + pal.nightF * 0.05;
@@ -316,7 +323,6 @@ function updateWorld(dt) {
   oU.amp.value = clamp(hs / BAKE_HS_M, 0.03, 3.4);
   oU.rough.value = clamp(0.055 + wx.windKt * 0.0042 + wx.rain * 0.05, 0.05, 0.34);
   oU.foamAmt.value = state.foam * clamp((smoothedSea - 1.5) / 6, 0.08, 1.6);
-  oU.wakeAmt.value = clamp(shipState.speedKn / 12, 0, 1.2);
   mix3(oU.deepColor.value, PAL.deepNight, PAL.deepNight, PAL.deepDay, pal);
   oU.scatterColor.value.copy(PAL.scatterDay).multiplyScalar(pal.dayF * cloudDim);
   // Sampled-space rotation aligns baked wind (0.32 rad) with world wind.
@@ -327,12 +333,40 @@ function updateWorld(dt) {
     oceanOff[o].y = (oceanOff[o].y + speedMS * seaDt) % OCT_TILES_JS[o];
     oU[['off0', 'off1', 'off2'][o]].value.copy(oceanOff[o]);
   }
+  travelM += speedMS * seaDt;
+  oU.travelM.value = travelM;
 
-  // Ship motion on the sea clock; the user's wave-height scale rides along.
+  // Ship motion: generic response blended with the actual swell train the
+  // shader displaces (same sampled-space transform as ocean.js toSampled,
+  // octave 0), sampled at bow/stern/port/starboard so the hull visibly
+  // rides the waves passing under it instead of ignoring them.
   const motionSea = clamp(smoothedSea * (0.8 + 0.3 * state.waveScale), 0, 9.5);
   const mot = motionAt(seaTime, motionSea, shipState.speedKn);
-  ship.group.rotation.set(rad(mot.pitchDeg), rad(mot.yawDeg), rad(mot.rollDeg));
-  ship.group.position.y = mot.heaveM;
+  const rot = oU.rotCS.value;
+  const swellScaleJs = (0.45 + 0.55 * oU.fftBlend.value) * oU.amp.value;
+  const swellAt = (lx, lz) => {
+    const fx = lx, fy = -lz;
+    const sx = fx * rot.x - fy * rot.y + oceanOff[0].x;
+    const sy = fx * rot.y + fy * rot.x + oceanOff[0].y;
+    return swellHeight(sx, sy, seaTime) * swellScaleJs;
+  };
+  const hBow = swellAt(0, -140), hStern = swellAt(0, 140);
+  const hPort = swellAt(-24, 0), hStbd = swellAt(24, 0);
+  const waveHeave = (hBow + hStern + hPort + hStbd) / 4;
+  const wavePitchDeg = Math.atan2(hBow - hStern, 280) * 180 / Math.PI;
+  const waveRollDeg = Math.atan2(hStbd - hPort, 48) * 180 / Math.PI;
+  ship.group.rotation.set(
+    rad(mot.pitchDeg * 0.55 + wavePitchDeg * 0.75),
+    rad(mot.yawDeg),
+    rad(mot.rollDeg * 0.55 + waveRollDeg * 0.75));
+  ship.group.position.y = mot.heaveM * 0.5 + waveHeave * 0.55;
+  oU.shipHeave.value = ship.group.position.y;
+  // Bow spray/wake strength follows how hard the bow is working.
+  const bowVel = dt > 0.001 ? (hBow - prevBowH) / dt : 0;
+  prevBowH = hBow;
+  bowVelSm = lerp(bowVelSm, bowVel, 0.08);
+  oU.wakeAmt.value = clamp(shipState.speedKn / 12, 0, 1.2)
+    * (0.75 + Math.min(Math.abs(bowVelSm) * 0.35, 0.9));
   ship.radar.rotation.y = seaTime * 1.4;
   ship.group.updateMatrixWorld(true);
 
@@ -624,7 +658,7 @@ function updateHUD(dt, frame) {
 }
 
 // ---------- boot + main loop ----------
-let lastT = performance.now(), firstFrames = 0;
+let lastT = performance.now(), firstFrames = 0, lastRenderErrLog = 0;
 function loop(now) {
   requestAnimationFrame(loop);
   // Wall-clock delta (generous cap only for tab suspension). A tight 50 ms
@@ -633,7 +667,20 @@ function loop(now) {
   lastT = now;
   const frame = updateWorld(dt);
   updateHUD(dt, frame);
-  post.render();
+  // A transient post-processing failure must not black-screen the voyage:
+  // fall back to a plain render for that frame and keep sailing.
+  try {
+    post.render();
+  } catch (err) {
+    const nowMs = performance.now();
+    if (nowMs - lastRenderErrLog > 5000) {
+      lastRenderErrLog = nowMs;
+      console.error('Post-processing frame failed; rendering without it:', err);
+    }
+    try { renderer.render(scene, camera); } catch (err2) {
+      if (nowMs - lastRenderErrLog > 5000) console.error('Fallback render failed:', err2);
+    }
+  }
   // Loader stays until the FFT bake lands (hides the fallback-sea swap),
   // with a hard cap so a failed bake never traps the user on it.
   if (firstFrames < 10000) {

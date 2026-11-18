@@ -65,6 +65,7 @@ Red Sea dawn and loops after Hong Kong.
 ## Tests
 
 ```bash
-node tests/sim.test.mjs   # route, solar, weather, traffic, motion
-node tests/fft.test.mjs   # FFT calibration (Hs), determinism, bake timing
+node tests/sim.test.mjs         # route, solar, weather, traffic, motion
+node tests/fft.test.mjs         # FFT calibration (Hs), determinism, bake timing
+node tests/regressions.test.mjs # depthTexture crash guard, shared swell
 ```

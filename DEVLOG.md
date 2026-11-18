@@ -161,3 +161,40 @@ maximum storm from drone and bridge, phone layout).
   (full resolution, 32 cloud steps, bloom) is the default for the user's
   RTX 3080 at 4K; Balanced (75% scale, 22 steps) and Performance (55%, 14
   steps, no bloom) are one click away in Tweaks.
+
+## Follow-up — field reports from the 3080
+
+Three reports came back from real hardware: the ship did not read as
+moving, waves ignored the hull, the water texture tiled visibly and
+jumped, and one session died with
+`Cannot read properties of null (reading 'depthTexture')`.
+
+- **Crash:** we toggled `sunLight.castShadow` every frame on an intensity
+  threshold. In three r180 that recreates the light's ShadowNode, whose
+  `shadowMap` is null until first setup; `updateShadow` then dereferences
+  `shadowMap.depthTexture`. It never fired on the software renderer but is
+  a real-GPU race at dawn/dusk crossings. `castShadow` is now assigned
+  once; the pass is gated with `shadow.autoUpdate = false` +
+  `needsUpdate`. The render loop also falls back to a plain render for a
+  frame if post-processing throws, instead of black-screening. Pinned by
+  `tests/regressions.test.mjs`.
+- **Jumping detail:** the rotated micro-detail sample resampled wrapped
+  scroll coordinates by 1.37×, which breaks tile periodicity — every time
+  an offset wrapped (~1.6 s at cruise) the detail field jumped. The second
+  detail layer is now an exact 90° axis swap of the 76 m octave, and the
+  foam breakup no longer uses anisotropically scaled wrapped coordinates.
+- **No sense of motion:** the only surface detail was wave phase, which
+  propagates at wave speed, not ship speed. A frame-0 "drift" layer is now
+  scrolled by travelled metres, so texture streams astern past the hull at
+  exactly ship speed; a bow-wave V and streamed prop wash use the same
+  advected pattern.
+- **Waves ignored the boat:** ship pitch/roll/heave now sample the very
+  swell train the vertex shader displaces (shared `src/sim/swell.js`) at
+  bow/stern/port/starboard, water inside the hull footprint is pulled to
+  the ship's heave so waves meet the waterline instead of clipping through
+  the hull, and bow spray follows bow vertical velocity.
+
+Verified with paired storm screenshots seconds apart (horizon roll and
+hull-side streaming both visible frame-to-frame), a day/night + resize +
+quality-cycle stress run with zero console errors, the full unit suites,
+and a clean `--final` browser pass before redeploying.

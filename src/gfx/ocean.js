@@ -6,6 +6,7 @@ import {
   smoothstep, pow, exp, max, sin, cos, sqrt, length, fract, floor, abs,
   positionLocal, positionWorld, cameraPosition, varyingProperty, select,
 } from 'three/tsl';
+import { SWELL_WAVES } from '../sim/swell.js';
 
 export const ATLAS_N = 128, ATLAS_FRAMES = 64, ATLAS_GRID = 8, ATLAS_PERIOD = 16;
 // The bake's dominant wavelength is ~0.7 of a tile. These world tile sizes put
@@ -30,6 +31,8 @@ export function createOceanUniforms() {
     scatterColor: uniform(new THREE.Color(0.02, 0.16, 0.16)),
     foamAmt: uniform(1),
     wakeAmt: uniform(1),
+    travelM: uniform(0),      // metres travelled through the water (drift layer)
+    shipHeave: uniform(0),    // ship's heave, so water under the hull follows it
     seaTime: uniform(0),
   };
 }
@@ -106,6 +109,10 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const fr = fract(U.framePhase);
     return mix(sampleFrame(sxz, tileM, f0), sampleFrame(sxz, tileM, f1), fr);
   });
+  // Frame-0 sample: a pattern frozen to the water itself. Scrolled by the
+  // ship's travelled distance it streams past the hull at ship speed, which
+  // is the cue that sells forward motion in open ocean.
+  const sampleStatic = Fn(([sxz, tileM]) => sampleFrame(sxz, tileM, float(0.0)));
 
   // Ship-frame xz -> sampled space (x east-ish, y forward), per octave.
   const toSampled = (xz, oct) => {
@@ -174,10 +181,7 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const swellScale = float(0.45).add(U.fftBlend.mul(0.55))
       .mul(float(1.0).div(float(1.0).add(pow(dist.div(1800.0), 2.0))));
     const swellCoords = toSampled(local.xz, 0);
-    const swellWaves = [
-      [0.98, -0.20, 265, 0.34], [0.91, 0.42, 171, 0.21], [0.76, -0.65, 108, 0.12],
-    ];
-    for (const [dx, dz, wl, a] of swellWaves) {
+    for (const { dx, dz, wl, amp: a } of SWELL_WAVES) {
       const k = (2 * Math.PI) / wl, w = Math.sqrt(9.81 * k);
       const ph = swellCoords.x.mul(dx * k).add(swellCoords.y.mul(dz * k)).sub(U.seaTime.mul(w));
       hSum.addAssign(sin(ph).mul(a).mul(swellScale));
@@ -185,8 +189,14 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
       dispS.addAssign(vec2(dx, dz).mul(cos(ph).mul(a * 0.55).mul(swellScale)));
     }
 
-    const h = hSum.mul(U.amp);
-    const dispShip = sampledVecToShip(dispS.mul(U.amp));
+    // Hull interaction: inside the hull footprint the surface is pulled to
+    // the ship's own heave (and chop is damped), so waves meet the hull at
+    // its waterline instead of poking through the sides and deck.
+    const hullMask = float(1.0).sub(smoothstep(30.0, 44.0, abs(local.x)))
+      .mul(smoothstep(-178.0, -164.0, local.z))
+      .mul(float(1.0).sub(smoothstep(164.0, 178.0, local.z)));
+    const h = mix(hSum.mul(U.amp), U.shipHeave, hullMask.mul(0.85));
+    const dispShip = sampledVecToShip(dispS.mul(U.amp).mul(float(1.0).sub(hullMask.mul(0.7))));
     const nS = normalize(vec3(slope.x.mul(U.amp).negate(), 1.0, slope.y.mul(U.amp).negate()));
     const nShip2 = sampledVecToShip(vec2(nS.x, nS.z));
     vNorm.assign(normalize(vec3(nShip2.x, nS.y, nShip2.y)));
@@ -201,25 +211,41 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const dist = length(viewVec);
     const V = normalize(viewVec);
 
-    // Per-pixel micro detail from the smallest FFT octave, sampled twice
-    // (rotated) so tiling never reads as a regular dot/stipple pattern.
+    // Per-pixel micro detail from the two smaller FFT octaves. The second
+    // sample is the 76 m octave with axes swapped (an exact 90-degree
+    // rotation at scale 1): resampling wrapped coordinates by a
+    // non-integer factor (the old 1.37x) broke tile periodicity and made
+    // the detail jump every time the scroll offset wrapped.
     const sxz = toSampled(wp.xz, 2);
     const epsD = float(0.45);
     const hc = sampleFFT(sxz, tiles[2]);
     const hx = sampleFFT(sxz.add(vec2(epsD, 0.0)), tiles[2]);
     const hz = sampleFFT(sxz.add(vec2(0.0, epsD)), tiles[2]);
-    const sxzR = vec2(sxz.y, sxz.x.negate()).mul(1.37).add(vec2(31.7, 11.3));
-    const hcR = sampleFFT(sxzR, tiles[2]);
-    const hxR = sampleFFT(sxzR.add(vec2(epsD, 0.0)), tiles[2]);
-    const hzR = sampleFFT(sxzR.add(vec2(0.0, epsD)), tiles[2]);
     const slopeA = vec2(hx.r.sub(hc.r), hz.r.sub(hc.r)).div(epsD);
-    const slopeB = vec2(hzR.r.sub(hcR.r), hxR.r.sub(hcR.r).negate()).div(epsD);
-    const mSlopeS = slopeA.add(slopeB.mul(0.8))
+    const sxz1 = toSampled(wp.xz, 1);
+    const sxzR = vec2(sxz1.y, sxz1.x.negate()).add(vec2(31.7, 11.3));
+    const eps1 = float(2.4);
+    const hcR = sampleFFT(sxzR, tiles[1]);
+    const huR = sampleFFT(sxzR.add(vec2(eps1, 0.0)), tiles[1]);
+    const hvR = sampleFFT(sxzR.add(vec2(0.0, eps1)), tiles[1]);
+    // u = sampled-y, v = -sampled-x  =>  dh/dx = -dh/dv, dh/dy = dh/du.
+    const slopeB = vec2(hvR.r.sub(hcR.r).negate(), huR.r.sub(hcR.r)).div(eps1);
+    const mSlopeS = slopeA.add(slopeB.mul(0.55))
       .mul(OCTAVE_WEIGHTS[2] * 1.7).mul(U.amp).mul(U.fftBlend);
     const mSlope = sampledVecToShip(mSlopeS);
-    const detFade = float(1.0).div(float(1.0).add(dist.div(300.0)));
+    // Advected drift detail: frame-0 pattern scrolled by travelled metres,
+    // so surface texture streams astern past the hull at ship speed.
+    const dCoord = vec2(wp.x, wp.z.sub(U.travelM));
+    const epsDrift = float(1.6);
+    const dcS = sampleStatic(dCoord, tiles[1]);
+    const dxS = sampleStatic(dCoord.add(vec2(epsDrift, 0.0)), tiles[1]);
+    const dzS = sampleStatic(dCoord.add(vec2(0.0, epsDrift)), tiles[1]);
+    const driftSlope = vec2(dxS.r.sub(dcS.r), dzS.r.sub(dcS.r)).div(epsDrift)
+      .mul(0.30).mul(U.fftBlend);
+    const detFade = float(1.0).div(float(1.0).add(pow(dist.div(220.0), 1.5)));
     const N = normalize(vNorm.add(vec3(
-      mSlope.x.negate().mul(detFade), 0.0, mSlope.y.negate().mul(detFade))));
+      mSlope.x.add(driftSlope.x).negate().mul(detFade), 0.0,
+      mSlope.y.add(driftSlope.y).negate().mul(detFade))));
 
     const L = skyU.sunDir;
     const NdotV = clamp(dot(N, V), 0.0, 1.0);
@@ -256,7 +282,7 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
       .add(skyCol.mul(fres)).add(spec).add(moonSpec).add(scatter);
 
     // ---- Foam: Jacobian folding + crest breakup (wind-stretched) --------
-    const hcF = sampleFFT(vec2(sxz.x.mul(0.6), sxz.y.mul(0.22)), tiles[2]);
+    const hcF = sampleFFT(toSampled(wp.xz, 0), tiles[0]);
     const noiseBreak = clamp(hcF.r.mul(0.34).add(hcR.r.mul(0.14)).add(0.5), 0.0, 1.15);
     // Baked J assumes unit amplitude; compression deepens as chop is scaled.
     const jEff = float(1.0).sub(float(1.0).sub(vFoamJ).mul(clamp(U.amp, 0.15, 2.4)));
@@ -291,8 +317,18 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const bowDist = length(wp.xz.sub(vec2(0.0, -158.0)));
     const spray = exp(bowDist.mul(-0.020)).mul(U.wakeAmt)
       .mul(clamp(U.amp.mul(0.55), 0.1, 1.1)).mul(clamp(wakeNoise, 0.3, 1.1));
+    // Bow wave: V arms opening astern from the stem (~19 degrees), broken
+    // up by the advected drift pattern so foam streams along the hull.
+    const bz = wp.z.add(165.0);
+    const bowArmCenter = float(4.0).add(max(bz, 0.0).mul(0.32));
+    const bowArm = float(1.0).sub(smoothstep(2.0, float(10.0).add(max(bz, 0.0).mul(0.02)),
+        abs(hxAbs.sub(bowArmCenter))))
+      .mul(exp(max(bz, 0.0).mul(-0.004)))
+      .mul(smoothstep(0.0, 12.0, bz))
+      .mul(float(1.0).sub(smoothstep(300.0, 360.0, bz)))
+      .mul(clamp(dcS.r.mul(0.5).add(0.75), 0.25, 1.1));
     foam = clamp(foam.add(wake.mul(U.wakeAmt)).add(hullBand.mul(U.wakeAmt).mul(0.85))
-      .add(spray.mul(0.8)), 0.0, 1.0);
+      .add(spray.mul(0.8)).add(bowArm.mul(U.wakeAmt).mul(0.55)), 0.0, 1.0);
 
     const foamCol = skyU.ambient.mul(1.5).add(skyU.sunColor.mul(0.05).mul(NdotL))
       .add(vec3(0.5, 0.55, 0.7).mul(skyU.lightning).mul(0.8));
