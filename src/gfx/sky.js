@@ -119,13 +119,14 @@ function makeStarsFn(U, volNode) {
       const tw = float(0.75).add(sin(U.timeSec.mul(2.0).add(h.mul(40.0))).mul(0.25));
       return star.mul(tw).mul(h);
     };
-    const stars = cellStar(d, 150.0, 0.992).mul(2.0).add(cellStar(d.add(31.7), 280.0, 0.995).mul(1.1));
+    const stars = cellStar(d, 150.0, 0.985).mul(2.6).add(cellStar(d.add(31.7), 280.0, 0.990).mul(1.5));
     // Milky Way: soft band around a tilted great circle, dust from volume.
     const bandN = normalize(vec3(0.42, 0.75, -0.51));
-    const band = exp(abs(dot(d, bandN)).negate().mul(3.1));
-    const dust = volNode.sample(d.mul(1.6).add(0.31)).r
-      .add(volNode.sample(d.mul(3.9).add(0.77)).g.mul(0.55));
-    const milky = band.mul(dust.mul(0.42).add(0.16)).mul(0.32);
+    const band = exp(abs(dot(d, bandN)).negate().mul(3.4));
+    // R channel only: the Worley G/B/A channels read as honeycomb at sky scale.
+    const dust = volNode.sample(d.mul(1.6).add(0.31)).r.mul(0.55)
+      .add(volNode.sample(d.mul(4.3).add(0.77)).r.mul(0.45));
+    const milky = band.mul(dust.mul(0.34).add(0.08)).mul(0.27);
     const nightF = float(1.0).sub(smoothstep(-0.16, 0.02, U.sunDir.y));
     const vis = nightF.mul(smoothstep(-0.02, 0.12, dir.y));
     return V3(0.85, 0.9, 1.0).mul(stars).add(V3(0.62, 0.68, 0.85).mul(milky)).mul(vis);
@@ -148,7 +149,7 @@ function makeCloudsFn(U, volNode) {
     const dt = slabLen.div(steps);
 
     const prof = U.cloudProfile; // x bottom soft, y top soft, z density, w detail
-    const coverThr = float(1.04).sub(pow(max(U.cloudCover, 0.001), 0.75).mul(0.9));
+    const coverThr = float(1.16).sub(pow(max(U.cloudCover, 0.001), 0.75).mul(0.95));
     const sigma = float(0.0008).mul(prof.z);
     const sunSlant = min(float(1.0).div(max(U.sunDir.y, 0.12)), 4.0);
     const phaseCos = dot(dir, U.sunDir);
@@ -168,18 +169,27 @@ function makeCloudsFn(U, volNode) {
       const hf = clamp(p.y.sub(base).div(max(U.cloudThick, 1.0)), 0.0, 1.0);
       const profile = smoothstep(0.0, prof.x, hf)
         .mul(float(1.0).sub(smoothstep(prof.y, 1.0, hf)));
-      const uvw = p.add(U.cloudDrift).mul(volScale);
-      const baseSmp = volNode.sample(uvw);
-      const detail = volNode.sample(uvw.mul(3.07).add(vec3(0.23, 0.11, 0.47)));
+      // Map the volume's third axis to height through the layer. Sampling by
+      // absolute altitude/6200 used only a thin slice of the 3D noise and
+      // extruded it into flat discs; hf gives the clouds real vertical body.
+      const xzBase = p.xz.add(U.cloudDrift.xz).mul(volScale);
+      const evolve = U.cloudDrift.y.mul(0.00003);
+      const detail = volNode.sample(vec3(
+        xzBase.x.mul(3.07).add(0.23), xzBase.y.mul(3.07).add(0.47),
+        hf.mul(2.15).add(evolve).add(0.11)));
       const detailVal = detail.g.mul(0.45).add(detail.b.mul(0.32)).add(detail.a.mul(0.23));
-      let shape = baseSmp.r.mul(profile);
-      shape = shape.sub(detailVal.mul(prof.w).mul(float(1.0).sub(shape)).mul(0.6));
-      const dens = smoothstep(coverThr, coverThr.add(0.32), shape).mul(profile);
+      const warpX = detail.g.sub(0.5).mul(0.16);
+      const warpY = detail.b.sub(0.5).mul(0.16);
+      const baseSmp = volNode.sample(vec3(
+        xzBase.x.add(warpX), xzBase.y.add(warpY), hf.mul(0.92).add(evolve)));
+      let shape = baseSmp.r;
+      shape = shape.sub(detailVal.mul(prof.w).mul(float(1.0).sub(shape)).mul(0.55));
+      const dens = smoothstep(coverThr, coverThr.add(0.30), shape).mul(profile);
       const a = float(1.0).sub(exp(dens.mul(dt).mul(sigma).negate()));
       odAcc.addAssign(dens.mul(dt).mul(sigma));
       // Tops catch the sun, bases sit in shade (cheap vertical gradient).
       const sunBeer = exp(odAcc.mul(sunSlant).mul(0.55).negate())
-        .mul(hf.mul(0.65).add(0.5));
+        .mul(pow(hf, 1.5).mul(0.95).add(0.35));
       const powder = float(1.0).sub(exp(odAcc.mul(1.6).negate()));
       const amb = U.ambient.mul(float(1.38).sub(U.cloudDark.mul(1.18)))
         .add(V3(0.55, 0.6, 0.78).mul(U.lightning).mul(2.2));
@@ -192,11 +202,11 @@ function makeCloudsFn(U, volNode) {
     });
 
     // Aerial perspective: distant cloud deck melts into horizon haze.
-    const distFade = exp(tEnter.mul(-0.000016));
-    const horFade = smoothstep(0.012, 0.09, dir.y);
+    const distFade = exp(tEnter.mul(-0.000010));
+    const horFade = smoothstep(0.004, 0.16, dir.y);
     const alpha = float(1.0).sub(trans).mul(distFade).mul(horFade)
       .mul(step(0.0001, slabLen));
-    const cloudCol = mix(colAcc, U.fogColor.mul(0.85), float(1.0).sub(distFade).mul(0.8));
+    const cloudCol = mix(colAcc, U.fogColor.mul(0.85), float(1.0).sub(distFade).mul(0.62));
     return vec4(cloudCol, clamp(alpha, 0.0, 1.0));
   });
 }

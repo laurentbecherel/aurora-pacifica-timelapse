@@ -8,7 +8,7 @@ export const QUALITY = {
 export const DEFAULT_STATE = {
   playing: true,
   timeScale: 1200,          // sim-seconds per real second (timelapse)
-  voyageDay: 10.06,         // Colombo approach dawn, sun dead ahead (verified in tests)
+  voyageDay: 0.155,         // first Red Sea dawn, near the start of the route (verified in tests)
   camera: 'bridge',
   preset: 'auto',
   manual: { sea: null, cloud: null, windKt: null },
@@ -28,7 +28,7 @@ export const DEFAULT_STATE = {
 // Cloud look per weather cloudType: base/thickness (m) + profile vector
 // (bottomSoft, topSoft, densityMul, detailAmt).
 export const CLOUD_TYPES = [
-  { base: 820,  thick: 980,  profile: [0.12, 0.82, 1.0, 0.6] },   // cumulus
-  { base: 620,  thick: 330,  profile: [0.10, 0.72, 0.85, 0.25] }, // stratus
-  { base: 500,  thick: 1700, profile: [0.10, 0.75, 1.5, 0.7] },   // storm towers
+  { base: 820,  thick: 1250, profile: [0.08, 0.84, 1.05, 0.65] }, // cumulus
+  { base: 620,  thick: 330,  profile: [0.18, 0.58, 0.9, 0.25] },  // stratus
+  { base: 480,  thick: 2100, profile: [0.06, 0.82, 1.3, 0.75] },  // storm towers
 ];

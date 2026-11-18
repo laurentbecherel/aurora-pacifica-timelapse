@@ -50,7 +50,7 @@ export const WEATHER_KEYS = [
   { day: 16.5, sea: 2.0, windKt: 9,  windFrom: 180, cloud: 0.6,  cloudType: 1, rain: 0.05, fog: 0.22, bolt: 0.0, label: 'Malacca Strait — humid haze, dense traffic' },
   { day: 18.5, sea: 1.0, windKt: 7,  windFrom: 160, cloud: 0.5,  cloudType: 0, rain: 0.1,  fog: 0.1,  bolt: 0.15, label: 'Singapore — equatorial towers building' },
   { day: 20.5, sea: 3.5, windKt: 16, windFrom: 220, cloud: 0.3,  cloudType: 0, rain: 0.0,  fog: 0.0,  bolt: 0.0, label: 'South China Sea — trade cumulus' },
-  { day: 23.0, sea: 3.0, windKt: 14, windFrom: 215, cloud: 0.14, cloudType: 0, rain: 0.0,  fog: 0.0,  bolt: 0.0, label: 'Crystal night — Milky Way overhead' },
+  { day: 23.0, sea: 3.0, windKt: 14, windFrom: 215, cloud: 0.08, cloudType: 0, rain: 0.0,  fog: 0.0,  bolt: 0.0, label: 'Crystal night — Milky Way overhead' },
   { day: 25.8, sea: 7.0, windKt: 38, windFrom: 60,  cloud: 0.9,  cloudType: 2, rain: 0.95, fog: 0.12, bolt: 0.8, label: 'Typhoon fringe — storm seas' },
   { day: 27.5, sea: 4.0, windKt: 18, windFrom: 80,  cloud: 0.4,  cloudType: 0, rain: 0.1,  fog: 0.02, bolt: 0.05, label: 'Storm passing astern' },
   { day: 28.6, sea: 1.5, windKt: 9,  windFrom: 90,  cloud: 0.25, cloudType: 0, rain: 0.0,  fog: 0.15, bolt: 0.0, label: 'Hong Kong — dawn arrival' },
@@ -59,13 +59,13 @@ export const WEATHER_KEYS = [
 
 // Land & port features anchored in lat/lon. `len` along `orient` (deg from N).
 export const FEATURES = [
-  { type: 'port',  name: 'Colombo',   lat: 6.9636, lon: 79.82, orient: 82, len: 2600 },
+  { type: 'port',  name: 'Colombo',   lat: 6.9616, lon: 79.82, orient: 82, len: 2600 },
   { type: 'ridge', name: 'Sri Lanka', lat: 7.1,   lon: 80.05,  orient: 150, len: 34000, h: 900 },
   { type: 'ridge', name: 'Sumatra',   lat: 4.6,   lon: 97.6,   orient: 135, len: 52000, h: 1100 },
   { type: 'ridge', name: 'Malaysia',  lat: 4.35,  lon: 100.3,  orient: 135, len: 52000, h: 800 },
-  { type: 'port',  name: 'Singapore', lat: 1.2426, lon: 103.8226, orient: 125, len: 3400 },
+  { type: 'port',  name: 'Singapore', lat: 1.24115, lon: 103.82115, orient: 125, len: 3400 },
   { type: 'ridge', name: 'Singapore', lat: 1.33,  lon: 103.85, orient: 95,  len: 26000, h: 220 },
-  { type: 'port',  name: 'Hong Kong', lat: 22.3087, lon: 114.1565, orient: 346, len: 3200 },
+  { type: 'port',  name: 'Hong Kong', lat: 22.3094, lon: 114.1584, orient: 346, len: 3200 },
   { type: 'ridge', name: 'Lantau',    lat: 22.25, lon: 113.95, orient: 80,  len: 22000, h: 850 },
   { type: 'ridge', name: 'Hong Kong I.', lat: 22.27, lon: 114.24, orient: 85, len: 18000, h: 650 },
 ];

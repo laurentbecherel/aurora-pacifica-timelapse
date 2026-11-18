@@ -8,9 +8,13 @@ import {
 } from 'three/tsl';
 
 export const ATLAS_N = 128, ATLAS_FRAMES = 64, ATLAS_GRID = 8, ATLAS_PERIOD = 16;
-const OCTAVE_TILES = [768, 96, 12];
-const OCTAVE_WEIGHTS = [1.28, 0.26, 0.05];
-const OCTAVE_FADES = [4200, 950, 160]; // vertex-displacement fade distances (m)
+// The bake's dominant wavelength is ~0.7 of a tile. These world tile sizes put
+// the main swell at ship scale (~240 m) with a steep ~55 m wind sea over it,
+// instead of stretching the same spectrum into a nearly flat 500 m swell.
+const OCTAVE_TILES = [340, 76, 10];
+const OCTAVE_WEIGHTS = [1.05, 0.50, 0.08];
+const OCTAVE_DISP = [0.95, 0.32, 0.045];
+const OCTAVE_FADES = [4200, 1500, 260]; // vertex-displacement fade distances (m)
 
 export function createOceanUniforms() {
   return {
@@ -44,7 +48,7 @@ export function makePlaceholderAtlas() {
 export function buildOceanGeometry() {
   const pos = [], idx = [];
   const pushGrid = () => {
-    const SEG = 250, SIZE = 2600, half = SIZE / 2, base = pos.length / 3;
+    const SEG = 320, SIZE = 2100, half = SIZE / 2, base = pos.length / 3;
     for (let j = 0; j <= SEG; j++) for (let i = 0; i <= SEG; i++)
       pos.push(-half + (i / SEG) * SIZE, 0, -half + (j / SEG) * SIZE);
     for (let j = 0; j < SEG; j++) for (let i = 0; i < SEG; i++) {
@@ -67,7 +71,7 @@ export function buildOceanGeometry() {
     }
   };
   pushGrid();
-  pushRing(1250, 19000, 18, 150, -0.35);
+  pushRing(1000, 19000, 20, 160, -0.35);
   pushRing(18000, 320000, 8, 96, -1.4);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -149,8 +153,8 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
       const sxz = toSampled(local.xz, o);
       const smp = sampleFFT(sxz, tiles[o]);
       hSum.addAssign(smp.r.mul(w));
-      dispS.addAssign(smp.gb.mul(w));
-      minJ.assign(select(smp.a.lessThan(minJ), smp.a, minJ));
+      dispS.addAssign(smp.gb.mul(float(OCTAVE_DISP[o]).mul(fade).mul(U.fftBlend)));
+      if (o < 2) minJ.assign(select(smp.a.lessThan(minJ), smp.a, minJ));
       if (o < 2) {
         const eps = float(OCTAVE_TILES[o] / ATLAS_N * 1.5);
         const hx = sampleFFT(sxz.add(vec2(eps, 0.0)), tiles[o]);
@@ -163,6 +167,23 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const anW = float(1.0).sub(U.fftBlend);
     hSum.addAssign(an.r.mul(anW).mul(0.5));
     slope.addAssign(an.gb.mul(anW));
+
+    // A coherent long swell train guarantees ship-scale faces and a moving
+    // horizon silhouette even where the broad FFT octave is gentle. It is
+    // part of the sea in both paths (reduced while the fallback is visible).
+    const swellScale = float(0.45).add(U.fftBlend.mul(0.55))
+      .mul(float(1.0).div(float(1.0).add(pow(dist.div(1800.0), 2.0))));
+    const swellCoords = toSampled(local.xz, 0);
+    const swellWaves = [
+      [0.98, -0.20, 265, 0.34], [0.91, 0.42, 171, 0.21], [0.76, -0.65, 108, 0.12],
+    ];
+    for (const [dx, dz, wl, a] of swellWaves) {
+      const k = (2 * Math.PI) / wl, w = Math.sqrt(9.81 * k);
+      const ph = swellCoords.x.mul(dx * k).add(swellCoords.y.mul(dz * k)).sub(U.seaTime.mul(w));
+      hSum.addAssign(sin(ph).mul(a).mul(swellScale));
+      slope.addAssign(vec2(cos(ph).mul(a * k * dx), cos(ph).mul(a * k * dz)).mul(swellScale));
+      dispS.addAssign(vec2(dx, dz).mul(cos(ph).mul(a * 0.55).mul(swellScale)));
+    }
 
     const h = hSum.mul(U.amp);
     const dispShip = sampledVecToShip(dispS.mul(U.amp));
@@ -194,7 +215,7 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const slopeA = vec2(hx.r.sub(hc.r), hz.r.sub(hc.r)).div(epsD);
     const slopeB = vec2(hzR.r.sub(hcR.r), hxR.r.sub(hcR.r).negate()).div(epsD);
     const mSlopeS = slopeA.add(slopeB.mul(0.8))
-      .mul(OCTAVE_WEIGHTS[2] * 2.6).mul(U.amp).mul(U.fftBlend);
+      .mul(OCTAVE_WEIGHTS[2] * 1.7).mul(U.amp).mul(U.fftBlend);
     const mSlope = sampledVecToShip(mSlopeS);
     const detFade = float(1.0).div(float(1.0).add(dist.div(300.0)));
     const N = normalize(vNorm.add(vec3(
@@ -225,7 +246,9 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     skyCol = mix(skyCol, skyU.ambient.mul(1.25), skyU.cloudCover.mul(0.38));
 
     // Water body: deep colour + forward-scatter glow through crests.
-    const crest = clamp(vH.mul(0.30).add(0.5), 0.0, 1.0);
+    // Normalise by the current amplitude so "crest" means the top of this
+    // sea, not an absolute height that saturates as soon as amp rises.
+    const crest = clamp(vH.div(max(U.amp.mul(2.8), 0.45)).mul(0.5).add(0.5), 0.0, 1.0);
     const backlit = pow(clamp(dot(V, L).mul(-0.5).add(0.5), 0.0, 1.0), 3.0);
     const scatter = U.scatterColor.mul(backlit).mul(crest)
       .mul(skyU.sunColor.r.mul(0.10).add(0.08));
@@ -234,11 +257,13 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
 
     // ---- Foam: Jacobian folding + crest breakup (wind-stretched) --------
     const hcF = sampleFFT(vec2(sxz.x.mul(0.6), sxz.y.mul(0.22)), tiles[2]);
-    const noiseBreak = clamp(hcF.r.mul(0.85).add(hcR.r.mul(0.3)).add(0.5), 0.0, 1.3);
-    const jFoam = float(1.0).sub(smoothstep(0.05, 0.8, vFoamJ));
-    const crestFoam = smoothstep(0.66, 0.97, crest.mul(noiseBreak));
-    let foam = clamp(jFoam.mul(1.15).add(crestFoam.mul(0.65)), 0.0, 1.0)
-      .mul(smoothstep(0.22, 0.6, noiseBreak)).mul(U.foamAmt).mul(U.fftBlend);
+    const noiseBreak = clamp(hcF.r.mul(0.34).add(hcR.r.mul(0.14)).add(0.5), 0.0, 1.15);
+    // Baked J assumes unit amplitude; compression deepens as chop is scaled.
+    const jEff = float(1.0).sub(float(1.0).sub(vFoamJ).mul(clamp(U.amp, 0.15, 2.4)));
+    const jFoam = float(1.0).sub(smoothstep(-0.05, 0.45, jEff));
+    const crestFoam = smoothstep(0.78, 0.98, crest.mul(noiseBreak));
+    let foam = clamp(jFoam.mul(1.05).add(crestFoam.mul(0.55)), 0.0, 1.0)
+      .mul(smoothstep(0.30, 0.68, noiseBreak)).mul(U.foamAmt).mul(U.fftBlend);
 
     // ---- Hull + wake foam (ship: 330 m, bow z=-165, stern z=+165) -------
     const hxAbs = abs(wp.x);
@@ -248,10 +273,17 @@ export function createOcean(skyU, atmosphereFn, atlasTexture) {
     const wakeDecay = exp(max(wz, 0.0).negate().mul(0.0022));
     const arm = float(1.0).sub(smoothstep(2.0, 14.0,
       abs(hxAbs.sub(float(9.0).add(max(wz, 0.0).mul(0.20))))));
-    const wakeNoise = sampleFFT(sxz.mul(0.35).add(vec2(0.0, U.seaTime.mul(-0.4))), tiles[1]).g.mul(1.1).add(0.75);
+    // Wake turbulence is sampled in ship coordinates and streamed astern,
+    // so the wash churns backward instead of being painted on the water.
+    const wakeCoord = vec2(wp.x.mul(0.075), max(wz, 0.0).mul(0.045).sub(U.seaTime.mul(0.55)));
+    const wakeN1 = sampleFFT(wakeCoord, tiles[1]).r;
+    const wakeN2 = sampleFFT(wakeCoord.mul(2.7).add(vec2(17.0, U.seaTime.mul(-0.8))), tiles[2]).r;
+    const wakeNoise = clamp(wakeN1.mul(0.38).add(wakeN2.mul(0.22)).add(0.55), 0.05, 1.1);
     const astern = smoothstep(0.0, 18.0, wz);
-    const wake = inWake.mul(0.42).add(arm.mul(0.4)).mul(wakeDecay).mul(astern)
-      .mul(clamp(wakeNoise, 0.38, 1.0));
+    const propWash = exp(max(wz, 0.0).mul(-0.012))
+      .mul(float(1.0).sub(smoothstep(18.0, 34.0, hxAbs)));
+    const wake = inWake.mul(0.72).add(arm.mul(0.5)).add(propWash.mul(0.7))
+      .mul(wakeDecay).mul(astern).mul(wakeNoise);
     const hullBand = smoothstep(24.0, 31.0, hxAbs)
       .mul(float(1.0).sub(smoothstep(31.0, 44.0, hxAbs)))
       .mul(smoothstep(-178.0, -150.0, wp.z)).mul(float(1.0).sub(smoothstep(150.0, 178.0, wp.z)));

@@ -13,10 +13,18 @@ real-time at one click.
 
 ![Bridge at golden hour](screenshots/01-bridge-golden.png)
 
+![Storm sea from the drone](screenshots/11-storm-drone.png)
+
+![Berthed in Hong Kong](screenshots/09-hongkong-port-drone.png)
+
+![Night under way](screenshots/04-night-milkyway.png)
+
 ## Run it
 
-**Hosted:** open the GitHub Pages URL from the repo's About section
-(Chrome/Edge with WebGPU recommended; a 3080 runs the Cinematic tier at 4K).
+**Hosted:** <https://laurentbecherel.github.io/aurora-pacifica-timelapse/>
+(Chrome/Edge with WebGPU recommended. The Cinematic tier targets a 3080 at
+4K; Balanced keeps the same scene at 75% render scale with fewer cloud steps
+if a particular 4K display/driver combination needs more headroom.)
 
 **Locally:**
 
@@ -30,15 +38,16 @@ No build step and no dependencies; three.js 0.180.0 loads from jsDelivr.
 
 | Input | Action |
 |---|---|
-| Space / ▶ | Play · pause the voyage |
+| Space / Pause button | Play · pause the voyage |
 | Scrub bar | Jump anywhere in the 30 days |
 | Speed slider / Real-time | 1× … 20000× (timelapse default 1200×) |
 | 1–5 or camera buttons | Bridge · Wing · Bow · Stern · Drone |
-| Drag | Look around (double-click re-centres) |
-| Wheel | Zoom (FOV) |
-| ⚙ Tweaks | Weather presets or manual sea/cloud/wind, wave height, foam, stabilisation, exposure, quality tier, bloom/traffic/rain toggles |
-| ♪ Sound | Procedural swell, wind, rain and thunder |
-| H / ◐ | Hide the interface · F fullscreen |
+| Drag | Look around; in Drone, orbit the ship |
+| Double-click / C | Re-centre the view |
+| Wheel | Zoom (field of view) |
+| Tweaks | Weather presets or manual sea/cloud/wind, wave height, foam, stabilisation, exposure, quality tier, bloom/traffic/rain toggles |
+| Sound | Procedural swell, wind, rain and thunder |
+| H / Hide UI | Hide the interface; tap the view to restore it · F fullscreen |
 
 ## How it works
 
@@ -47,7 +56,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system breakdown and
 simulation backend (`src/sim` — voyage, solar, weather, traffic, ship
 motion; unit-tested with `node tests/sim.test.mjs`) drives a three.js
 WebGPU/TSL renderer; a Web Worker bakes the FFT ocean atlas and cloud noise
-volume at load (`node tests/fft.test.mjs` validates the bake in ~4 s).
+volume at load (`node tests/fft.test.mjs` validates the bake in ~4 s). The
+FFT spectrum is tiled at ship scale (340/76/10 m) over a coherent swell
+train, and the cloud volume is sampled by height through the cloud layer so
+cumulus and storm towers have vertical body. The voyage opens on the first
+Red Sea dawn and loops after Hong Kong.
 
 ## Tests
 

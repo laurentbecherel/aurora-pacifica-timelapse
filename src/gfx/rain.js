@@ -2,8 +2,8 @@
 // All motion is in the vertex shader (seed attribute + time), zero CPU cost.
 import * as THREE from 'three/webgpu';
 import {
-  Fn, float, vec3, vec4, uniform, attribute, cameraPosition, positionLocal,
-  fract, normalize, cross, max,
+  Fn, float, vec3, vec4, uniform, attribute, cameraPosition, positionLocal, positionWorld,
+  fract, normalize, cross, smoothstep, length,
 } from 'three/tsl';
 
 export function createRain(skyU, maxCount = 7000) {
@@ -43,9 +43,11 @@ export function createRain(skyU, maxCount = 7000) {
     const vel = normalize(vec3(U.slant.x.mul(14.0), -23.0, U.slant.y.mul(14.0)));
     const toCam = normalize(cameraPosition.sub(center));
     const side = normalize(cross(vel, toCam));
-    const len = float(0.75).add(seed.w.mul(0.7));
+    const len = float(0.34).add(seed.w.mul(0.34));
+    const camDist = length(cameraPosition.sub(center));
+    const nearFade = smoothstep(1.2, 4.5, camDist);
     const gate = seed.w.lessThan(U.amt);
-    const wScale = gate.select(0.016, 0.0);
+    const wScale = gate.select(0.008, 0.0).mul(nearFade);
     const lScale = gate.select(1.0, 0.0); // zero length too: no 1px line artifacts
     return center
       .add(side.mul(positionLocal.x).mul(wScale))
@@ -53,7 +55,10 @@ export function createRain(skyU, maxCount = 7000) {
   })();
   mat.colorNode = Fn(() => {
     const col = skyU.ambient.mul(1.7).add(vec3(0.5, 0.55, 0.7).mul(skyU.lightning).mul(1.5));
-    return vec4(col, 0.34);
+    const dist = length(cameraPosition.sub(positionWorld));
+    const alpha = smoothstep(1.2, 4.5, dist)
+      .mul(float(1.0).sub(smoothstep(48.0, 70.0, dist))).mul(0.20);
+    return vec4(col, alpha);
   })();
 
   const mesh = new THREE.Mesh(geo, mat);

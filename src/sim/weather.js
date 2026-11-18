@@ -48,11 +48,11 @@ export function sampleWeather(day, preset = 'auto') {
   };
 }
 
-// Deterministic lightning pulse train vs voyage-seconds. Double-flash decay.
+// Deterministic lightning pulse train vs viewing seconds. Double-flash decay.
 // `bolt` 0..1 is storminess; strikes get rarer/dimmer as it drops.
 export function lightningPulse(voyageSec, bolt) {
   if (bolt <= 0.02) return 0;
-  const period = lerp(26, 7, bolt); // mean seconds between cells (voyage time)
+  const period = lerp(26, 7, bolt); // mean seconds between cells (viewing time)
   const cell = Math.floor(voyageSec / period);
   const h1 = hash(cell * 3 + 1), h2 = hash(cell * 3 + 2);
   if (h1 > bolt) return 0;                    // this cell is quiet

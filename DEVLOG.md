@@ -91,3 +91,73 @@ problems), 5-scene screenshot pass through the page's own controls
 (golden bridge, drone noon, storm, Milky-Way night, Hong Kong dawn
 landfall). Software renderer here runs ~1 fps; quality defaults were never
 tuned down for it. Next: fresh-player critique round, phone check, deploy.
+
+## Day 0 (cont.) — Fresh-player critique, rounds 1–2
+
+Two blind playtests (desktop + phone, every control exercised; reports kept
+with the QA artifacts as `critique-1.md` / `critique-2.md`) both returned
+**not ready**, and both earned it. The fixes that mattered most were root
+causes, not tuning:
+
+- **The sea clock was frame-capped.** The loop clamped `dt` to 50 ms, so on
+  the ~1 fps QA renderer waves, ship roll, the voyage and even the FPS meter
+  all ran ~20× slow — the ship looked glued down. The loop now uses
+  wall-clock delta (500 ms cap for tab suspension only).
+- **The FFT spectrum was stretched flat.** The bake's dominant wavelength
+  is ~0.7 of a tile; tiling it at 768 m gave a 500 m swell with almost no
+  slope at ship scale. Tiles are now 340/76/10 m over a denser centre grid,
+  chop is scaled per octave, foam comes only from large/medium crest
+  compression (the micro-octave Jacobian had been speckling the whole sea),
+  and a coherent swell train guarantees ship-scale faces in storm settings.
+- **Lightning could almost never be seen.** Flashes were scheduled in
+  voyage seconds; at 1200× a 1.4 s flash is stepped over by nearly every
+  frame. Lightning now runs on viewing time.
+- **Clouds were a thin slice extruded.** The volume was sampled by absolute
+  altitude ÷ 6200, using a sliver of the 3D noise. Mapping the third axis
+  to height through the layer (plus domain warp) gives cumulus and storm
+  towers actual vertical body.
+- **Cameras and ports.** Wing sat behind its own wall, Stern stared at a
+  roof slab, ports were quay ribbons floating on water. Wing moved outside
+  the tip, Stern became a stern-quarter wake view, and terminals are now
+  solid land: apron, fenders, braced gantry cranes with cabs and spreaders,
+  yard rows, warehouses, a lit skyline and extruded hills, anchored ~180 m
+  abeam of each berth.
+- **Ship presence.** Name plates on the bows and transom, bulwarks,
+  stanchions, bollards, hatch beams, ventilators, three-sided cabin window
+  bands, funnel cap/exhausts, floodlight masts whose heads are exactly
+  where the six night point-lights sit, and environment reflections.
+  Traffic is sorted nearest-first, bobs/rolls, and carries wakes and lit
+  bridge bands.
+- **Interface.** Phone transport now wraps into full rows (all five cameras
+  plus SPEED visible, verified at 393×852), Tweaks is capped above the
+  transport bar (bottom sheet on phones), debug draw/triangle stats are
+  gone, the Sound button reads on/off, Hide UI shows a restore hint and any
+  tap brings the UI back, and the voyage opens on the first Red Sea dawn
+  (Day 0.155) instead of mid-voyage.
+
+Final evidence for this build: curated scene pass in `screenshots/`
+(opening dawn, wing, drone noon, stern quarter, Hong Kong dawn landfall,
+Hong Kong in port from bridge and drone, Singapore night, Milky-Way night,
+maximum storm from drone and bridge, phone layout).
+
+## Day 0 (cont.) — Final verification & deployment
+
+- `node tests/sim.test.mjs` — **25/25 checks pass** (route 5,826 nm, solar,
+  weather, Malacca-vs-open-ocean traffic, ship motion, and the corrected
+  opening moment: Day 0.155, sun 8.1° on the first morning).
+- `node tests/fft.test.mjs` — **12/12 checks pass** (Hs calibration 3.5 m,
+  determinism, full bake 0.7 s, cloud volume 3.4 s).
+- `check_page.py --final` on the exact delivered bytes — **exit 0, zero
+  problems** on desktop 1366×768 and phone 393×852, no console/page errors.
+- `check_page.py --webgpu off` — **exit 0**; three's WebGL2 fallback renders
+  the same scene when WebGPU is unavailable.
+- Public deployment: GitHub repository
+  `laurentbecherel/aurora-pacifica-timelapse`, GitHub Pages built and
+  serving <https://laurentbecherel.github.io/aurora-pacifica-timelapse/>
+  (index, modules and the bake worker all verified over HTTPS). Local run
+  remains `node server.mjs 8080`.
+- Performance note: every frame rate measured during development came from
+  a software renderer and says nothing about the target machine. Cinematic
+  (full resolution, 32 cloud steps, bloom) is the default for the user's
+  RTX 3080 at 4K; Balanced (75% scale, 22 steps) and Performance (55%, 14
+  steps, no bloom) are one click away in Tweaks.

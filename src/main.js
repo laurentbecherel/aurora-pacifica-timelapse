@@ -55,10 +55,13 @@ scene.add(hemi);
 const flashLight = new THREE.DirectionalLight(0xaFC4ff, 0);
 flashLight.position.set(300, 800, -500);
 scene.add(flashLight, flashLight.target);
-// Warm work-lights so the deck reads at night.
-const deckGlow = new THREE.PointLight(0xffc98a, 0, 450, 2);
-deckGlow.position.set(0, 60, 40);
-scene.add(deckGlow);
+// Warm work-lights anchored at the visible floodlight masts along the deck.
+const deckLights = [-95, -25, 45].flatMap((z) => [-27, 27].map((x) => {
+  const light = new THREE.PointLight(0xffc98a, 0, 150, 2);
+  light.position.set(x, 34.5, z);
+  scene.add(light);
+  return light;
+}));
 
 // ---------- sky / ocean / ship ----------
 const skyU = createSkyUniforms();
@@ -118,7 +121,8 @@ function applyBake(fft, noise) {
 function startBake() {
   const phase = $('loadPhase'), bar = $('loadBar');
   const progress = (label, p) => {
-    if (phase) phase.textContent = `${label} — ${Math.round(p * 100)}%`;
+    void label;
+    if (phase) phase.textContent = `${p < 0.72 ? 'Preparing the ocean' : 'Preparing the sky'} — ${Math.round(p * 100)}%`;
     if (bar) bar.style.width = `${Math.round(p * 100)}%`;
   };
   try {
@@ -174,9 +178,9 @@ function mix3(out, night, dusk, day, p) {
 // ---------- camera rigs ----------
 const CAMS = {
   bridge: { pos: new THREE.Vector3(0, SHIP.bridgeY + 0.4, 120.55), tgt: new THREE.Vector3(0, 42, -220), interior: true },
-  wing:   { pos: new THREE.Vector3(27.8, SHIP.bridgeY + 0.7, 120.0), tgt: new THREE.Vector3(95, 8, -430), interior: false },
-  bow:    { pos: new THREE.Vector3(11, 33.5, -130), tgt: new THREE.Vector3(-6, 16, -500), interior: false },
-  stern:  { pos: new THREE.Vector3(8, 29, 158), tgt: new THREE.Vector3(-6, 4, 600), interior: false },
+  wing:   { pos: new THREE.Vector3(31.2, SHIP.bridgeY + 1.1, 120.2), tgt: new THREE.Vector3(95, 6, -430), interior: false },
+  bow:    { pos: new THREE.Vector3(-16, 34, -127), tgt: new THREE.Vector3(18, 14, -520), interior: false },
+  stern:  { pos: new THREE.Vector3(92, 36, 252), tgt: new THREE.Vector3(-10, 10, 150), interior: false },
   drone:  { pos: null, tgt: new THREE.Vector3(0, 22, 0), interior: false },
 };
 const look = { yaw: 0, pitch: 0 };
@@ -184,7 +188,7 @@ let droneAngle = 0.7, droneHeight = 135, draggingLook = false;
 
 const audio = new AmbientAudio();
 const oceanOff = [new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2()];
-const OCT_TILES_JS = [768, 96, 12];
+const OCT_TILES_JS = [340, 76, 10];
 let smoothedSea = 3, smoothedLightning = 0, lastThunderPulse = 0;
 let seaTime = 0, elapsed = 0, fftBlendStart = -1;
 
@@ -252,6 +256,7 @@ function updateWorld(dt) {
     .multiplyScalar(1 - wx.cloud * 0.18);
   mix3(skyU.fogColor.value, PAL.fogNight, PAL.fogDusk, PAL.fogDay, pal);
   if (wx.fog > 0.3) skyU.fogColor.value.lerp(_c2.setRGB(0.42, 0.46, 0.5), (wx.fog - 0.3) * pal.dayF);
+  skyU.fogColor.value.multiplyScalar(1 - wx.cloud * 0.13 - wx.rain * 0.20);
   skyU.fogDensity.value = 0.000026 + wx.fog * 0.0034 + wx.rain * 0.00010;
   skyU.haze.value = 0.18 + wx.fog * 0.7 + wx.cloud * 0.12;
   scene.fog.color.copy(skyU.fogColor.value);
@@ -267,7 +272,8 @@ function updateWorld(dt) {
   hemi.color.copy(skyU.ambient.value).multiplyScalar(2.4);
   hemi.groundColor.copy(skyU.fogColor.value).multiplyScalar(0.7);
   hemi.intensity = 0.35 + pal.dayF * 0.7 + pal.nightF * 0.05;
-  deckGlow.intensity = pal.nightF * 1900;
+  scene.environmentIntensity = 0.05 + pal.dayF * 0.22 + pal.duskF * 0.08;
+  for (const light of deckLights) light.intensity = pal.nightF * 130;
 
   // Stars wheel with sidereal time around the celestial pole.
   const pole = enuDirToShipFrame(0, Math.sin(rad(shipState.lat)), Math.cos(rad(shipState.lat)), shipState.headingDeg);
@@ -291,8 +297,9 @@ function updateWorld(dt) {
   skyU.cloudDrift.value.z -= (windShip.z * windMS + speedMS) * driftScale * dt;
   skyU.cloudDrift.value.y += dt * 6 * (state.playing ? Math.min(driftScale, 8) : 0);
 
-  // Lightning (voyage-clock pulse train).
-  const pulse = lightningPulse(day * 86400, wx.bolt);
+  // Lightning runs on viewing time, not voyage time: at 1200x a one-second
+  // voyage-time flash would almost never land between rendered frames.
+  const pulse = lightningPulse(elapsed, wx.bolt);
   smoothedLightning = lerp(smoothedLightning, pulse, 1 - Math.exp(-dt * 30));
   skyU.lightning.value = smoothedLightning;
   flashLight.intensity = smoothedLightning * 2.6;
@@ -321,8 +328,9 @@ function updateWorld(dt) {
     oU[['off0', 'off1', 'off2'][o]].value.copy(oceanOff[o]);
   }
 
-  // Ship motion on the sea clock.
-  const mot = motionAt(seaTime, smoothedSea, shipState.speedKn);
+  // Ship motion on the sea clock; the user's wave-height scale rides along.
+  const motionSea = clamp(smoothedSea * (0.8 + 0.3 * state.waveScale), 0, 9.5);
+  const mot = motionAt(seaTime, motionSea, shipState.speedKn);
   ship.group.rotation.set(rad(mot.pitchDeg), rad(mot.yawDeg), rad(mot.rollDeg));
   ship.group.position.y = mot.heaveM;
   ship.radar.rotation.y = seaTime * 1.4;
@@ -345,12 +353,12 @@ function updateWorld(dt) {
 
   // Traffic + features in ship frame.
   if (state.traffic) {
-    const act = trafficAt(fleet, day, shipState);
+    const act = trafficAt(fleet, day, shipState).sort((a, b) => a.range - b.range).slice(0, 14);
     vessels.update(act.map((v) => {
       const p = enuOffsetToShipFrame(v.east, v.north, shipState.headingDeg);
-      return { x: p.x, z: p.z, rotY: courseRotY(v.courseDeg, shipState.headingDeg), lengthM: v.lengthM };
-    }), nf);
-  } else vessels.update([], 0);
+      return { x: p.x, z: p.z, rotY: courseRotY(v.courseDeg, shipState.headingDeg), lengthM: v.lengthM, seed: v.seed };
+    }), nf, seaTime, smoothedSea);
+  } else vessels.update([], 0, seaTime, smoothedSea);
   let nearestPortGlow = null;
   for (const { f, obj } of featureObjs) {
     const enu = enuFromLatLon(f.lat, f.lon, shipState.lat, shipState.lon);
@@ -362,6 +370,7 @@ function updateWorld(dt) {
     obj.position.set(p.x, 0, p.z);
     obj.rotation.y = axisRotY(f.orient, shipState.headingDeg);
     if (obj.userData.glowMat) { obj.userData.glowMat.emissiveIntensity = nf * 5; nearestPortGlow = obj; }
+    if (obj.userData.cityMat) obj.userData.cityMat.emissiveIntensity = nf * 1.35;
   }
 
   updateCamera(dt, shipState);
@@ -411,6 +420,7 @@ let lastTimelapse = state.timeScale, scrubbing = false;
 
 function speedLabel(ts) {
   if (ts <= 1.01) return '1× real-time';
+  if (window.innerWidth <= 760) return `${Math.round(ts)}×`;
   if (ts < 90) return `${Math.round(ts)}×`;
   if (ts < 3600) return `${Math.round(ts)}× (${(ts / 60).toFixed(ts < 600 ? 1 : 0)} min/s)`;
   return `${Math.round(ts)}× (${(ts / 3600).toFixed(1)} h/s)`;
@@ -425,8 +435,10 @@ function syncSpeedUI() {
 function setCamera(name) {
   state.camera = name;
   look.yaw = 0; look.pitch = 0;
-  document.querySelectorAll('#camBtns button').forEach((b) =>
-    b.classList.toggle('on', b.dataset.cam === name));
+  document.querySelectorAll('#camBtns button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.cam === name);
+    b.blur();
+  });
 }
 function applyQuality() {
   const q = QUALITY[state.quality];
@@ -482,6 +494,8 @@ function initUI() {
   $('audioBtn').addEventListener('click', () => {
     state.audio = !state.audio;
     $('audioBtn').classList.toggle('on', state.audio);
+    $('audioBtn').textContent = state.audio ? 'Sound on' : 'Sound off';
+    $('audioBtn').setAttribute('aria-pressed', String(state.audio));
     if (state.audio) audio.start(); else audio.stop();
   });
   $('presetSel').addEventListener('change', (e) => { state.preset = e.target.value; });
@@ -556,13 +570,17 @@ function initUI() {
     $('fovSlider').value = state.fov;
     $('fovOut').textContent = `${Math.round(state.fov)}°`;
   }, { passive: false });
-  el.addEventListener('dblclick', () => { look.yaw = 0; look.pitch = 0; });
+  el.addEventListener('dblclick', () => {
+    look.yaw = 0; look.pitch = 0;
+    droneAngle = 0.7; droneHeight = 135;
+  });
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') { e.preventDefault(); $('playBtn').click(); }
     else if (e.code === 'KeyH') document.body.classList.toggle('uiHidden');
     else if (e.code === 'KeyF') toggleFullscreen();
     else if (e.code === 'KeyT') { $('tweaks').hidden = !$('tweaks').hidden; }
+    else if (e.code === 'KeyC') { look.yaw = 0; look.pitch = 0; droneAngle = 0.7; droneHeight = 135; }
     else if (['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(e.code)) {
       setCamera(['bridge', 'wing', 'bow', 'stern', 'drone'][Number(e.code.slice(-1)) - 1]);
     }
@@ -598,12 +616,10 @@ function updateHUD(dt, frame) {
   if (state.manual.sea === null) { $('seaSlider').value = wx.sea; $('seaOut').textContent = wx.sea.toFixed(1); }
   if (state.manual.cloud === null) { $('cloudSlider').value = wx.cloud; $('cloudOut').textContent = `${Math.round(wx.cloud * 100)}%`; }
   if (state.manual.windKt === null) { $('windSlider').value = wx.windKt; $('windOut').textContent = `${Math.round(wx.windKt)} kn`; }
-  const info = renderer.info.render;
   const isGPU = renderer.backend?.isWebGPUBackend ? 'WebGPU' : 'WebGL2 (fallback)';
   $('stats').innerHTML =
-    `${fpsEMA.toFixed(0)} fps · ${isGPU}<br>` +
-    `${renderer.domElement.width}×${renderer.domElement.height} · ${info.calls} draws · ${(info.triangles / 1000).toFixed(0)}k tris<br>` +
-    `Sea state ${smoothedSea.toFixed(1)} · Hs ${significantHeightM(smoothedSea).toFixed(1)} m · ${wx.windKt.toFixed(0)} kn wind`;
+    `${fpsEMA.toFixed(0)} fps · ${isGPU} · ${QUALITY[state.quality].label}<br>` +
+    `Sea state ${smoothedSea.toFixed(1)} · Hs ${(significantHeightM(smoothedSea) * state.waveScale).toFixed(1)} m · ${wx.windKt.toFixed(0)} kn wind`;
   if (state.audio) audio.update(wx);
 }
 
@@ -611,7 +627,9 @@ function updateHUD(dt, frame) {
 let lastT = performance.now(), firstFrames = 0;
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min((now - lastT) / 1000, 0.05);
+  // Wall-clock delta (generous cap only for tab suspension). A tight 50 ms
+  // cap made waves, roll and the voyage itself run ~20x slow at low fps.
+  const dt = clamp((now - lastT) / 1000, 0.0005, 0.5);
   lastT = now;
   const frame = updateWorld(dt);
   updateHUD(dt, frame);
@@ -620,7 +638,7 @@ function loop(now) {
   // with a hard cap so a failed bake never traps the user on it.
   if (firstFrames < 10000) {
     firstFrames++;
-    if (firstFrames >= 3 && (fftReady || elapsed > 14)) {
+    if (firstFrames >= 3 && ((fftReady && ocean.uniforms.fftBlend.value > 0.88) || elapsed > 20)) {
       firstFrames = 10000;
       $('loader').classList.add('done');
       setTimeout(() => $('loader')?.remove(), 1200);
@@ -633,6 +651,14 @@ async function boot() {
   applyQuality();
   startBake();
   await renderer.init();
+  try {
+    const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.3;
+  } catch (err) {
+    console.warn('Environment reflections unavailable', err);
+  }
   try {
     renderer.backend?.device?.addEventListener?.('uncapturederror', (e) =>
       console.error('[WebGPU]', e.error?.message));

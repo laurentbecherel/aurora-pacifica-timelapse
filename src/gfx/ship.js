@@ -41,7 +41,7 @@ export function makeContainerTexture() {
   return tex;
 }
 
-function makePlateTexture() {
+function makePlateTexture(repeatX = 1, repeatY = 1) {
   const c = document.createElement('canvas'); c.width = c.height = 256;
   const g = c.getContext('2d');
   g.fillStyle = '#8f979e'; g.fillRect(0, 0, 256, 256);
@@ -55,6 +55,24 @@ function makePlateTexture() {
   for (let y = 0; y <= 256; y += 64) { g.beginPath(); g.moveTo(0, y); g.lineTo(256, y); g.stroke(); }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+  tex.repeat.set(repeatX, repeatY);
+  return tex;
+}
+
+function makeNameTexture(text, sub = '', dark = false) {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = sub ? 192 : 128;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  g.fillStyle = dark ? 'rgba(24,34,46,0.94)' : 'rgba(240,246,250,0.94)';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '700 72px system-ui, sans-serif';
+  g.fillText(text, 512, sub ? 62 : 64);
+  if (sub) {
+    g.font = '500 42px system-ui, sans-serif';
+    g.fillText(sub, 512, 138);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4; tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
@@ -86,7 +104,8 @@ function hullGeometry(yBot, yTop, scaleXZ = 1) {
 
 export function buildShip() {
   const group = new THREE.Group();
-  const plateTex = makePlateTexture();
+  const plateTex = makePlateTexture(3, 2);
+  const hullTex = makePlateTexture(0.018, 0.05);
   const steel = (color, rough = 0.55, metal = 0.35) => new THREE.MeshStandardMaterial({
     color, roughness: rough, metalness: metal, map: plateTex,
   });
@@ -95,8 +114,29 @@ export function buildShip() {
   });
 
   // Hull + red boot-top below the waterline.
-  const hull = new THREE.Mesh(hullGeometry(-8, SHIP.deckY), steel(0x232e3a, 0.5, 0.4));
+  const hullMat = new THREE.MeshStandardMaterial({
+    color: 0x3b4f61, roughness: 0.44, metalness: 0.34, map: hullTex,
+  });
+  const hull = new THREE.Mesh(hullGeometry(-8, SHIP.deckY), hullMat);
   group.add(hull);
+  // Ship's name on both bows and across the transom.
+  const nameMat = new THREE.MeshStandardMaterial({
+    map: makeNameTexture('AURORA PACIFICA'), transparent: true,
+    roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -2,
+  });
+  for (const sx of [-30.18, 30.18]) {
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(34, 3.6), nameMat);
+    plate.rotation.y = sx < 0 ? -Math.PI / 2 : Math.PI / 2;
+    plate.position.set(sx, 16.8, -62);
+    group.add(plate);
+  }
+  const sternName = new THREE.Mesh(new THREE.PlaneGeometry(30, 5.6),
+    new THREE.MeshStandardMaterial({
+      map: makeNameTexture('AURORA PACIFICA', 'MONROVIA'), transparent: true,
+      roughness: 0.55, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -2,
+    }));
+  sternName.position.set(0, 15.5, 165.25);
+  group.add(sternName);
   const boot = new THREE.Mesh(hullGeometry(-8.5, 1.6, 1.012), plain(0x6e2a20, 0.72, 0.1));
   group.add(boot);
   // Deck surface.
@@ -162,9 +202,52 @@ export function buildShip() {
     rail.position.set(sx, SHIP.deckY + 1.0, -12);
     group.add(rail);
   }
+  // Transverse hatch beams in the gaps between bays.
+  const hatchMat = steel(0x46545a, 0.75, 0.2);
+  for (let i = 0; i < bays.length - 1; i++) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(54, 0.9, 0.55), hatchMat);
+    beam.position.set(0, SHIP.deckY + 0.85, (bays[i] + bays[i + 1]) / 2);
+    group.add(beam);
+  }
+  // Bulwarks, stanchions and mooring bollards give the deck edge its rhythm.
+  for (const sx of [-29.55, 29.55]) {
+    const bulwark = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.7, 272), steel(0x31404d, 0.62, 0.3));
+    bulwark.position.set(sx, SHIP.deckY + 1.05, -14);
+    group.add(bulwark);
+  }
+  const stanchion = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.18, 1.5, 0.18), plain(0x8d979f, 0.55, 0.5), 48);
+  const bollard = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.42, 0.5, 1.0, 8), plain(0x252c33, 0.6, 0.45), 16);
+  {
+    let si = 0, bi = 0;
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < 24; i++) for (const sx of [-29.55, 29.55]) {
+      m.makeTranslation(sx, SHIP.deckY + 0.95, -138 + i * 11.5);
+      stanchion.setMatrixAt(si++, m);
+    }
+    for (let i = 0; i < 8; i++) for (const sx of [-27.8, 27.8]) {
+      m.makeTranslation(sx, SHIP.deckY + 0.7, -126 + i * 36);
+      bollard.setMatrixAt(bi++, m);
+    }
+    stanchion.instanceMatrix.needsUpdate = true;
+    bollard.instanceMatrix.needsUpdate = true;
+  }
+  group.add(stanchion, bollard);
+  // Mushroom ventilators fore and aft.
+  for (const [vx, vz] of [[-12, -136], [12, -136], [-14, 112], [14, 112]]) {
+    const vent = new THREE.Group();
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.9, 3.2, 10), plain(0xaab3ba, 0.55, 0.35));
+    stem.position.y = 1.6;
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(1.55, 1.1, 12), plain(0x8d979f, 0.55, 0.35));
+    cap.position.y = 3.6;
+    vent.add(stem, cap);
+    vent.position.set(vx, SHIP.deckY + 0.4, vz);
+    group.add(vent);
+  }
 
   // ---- Superstructure (aft castle) ----------------------------------------
-  const white = steel(0xe8ebee, 0.5, 0.12);
+  const white = plain(0xd9dee3, 0.62, 0.08);
   const castle = new THREE.Mesh(new THREE.BoxGeometry(38, 20, 26), white);
   castle.position.set(0, SHIP.deckY + 10, 133);
   group.add(castle);
@@ -211,12 +294,21 @@ export function buildShip() {
     emissive: 0xffc98a, emissiveIntensity: 0,
   });
   for (let i = 0; i < 4; i++) {
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(38.3, 1.0, 26.3), cabinMat);
-    strip.position.set(0, SHIP.deckY + 4.5 + i * 4.6, 133);
-    strip.scale.set(1, 1, 1);
-    strip.geometry = new THREE.BoxGeometry(38.3, 1.0, 0.3);
-    strip.position.z = 119.8;
-    group.add(strip);
+    const y = SHIP.deckY + 4.5 + i * 4.6;
+    const front = new THREE.Mesh(new THREE.BoxGeometry(36, 1.0, 0.25), cabinMat);
+    front.position.set(0, y, 119.82);
+    group.add(front);
+    for (const sx of [-19.12, 19.12]) {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.0, 22), cabinMat);
+      side.position.set(sx, y, 133);
+      group.add(side);
+    }
+  }
+  // Roof plant on the bridge top.
+  for (const sx of [-10, 10]) {
+    const ac = new THREE.Mesh(new THREE.BoxGeometry(5, 1.4, 3), plain(0x9aa2a8, 0.6, 0.3));
+    ac.position.set(sx, SHIP.bridgeY + 3.9, 126);
+    group.add(ac);
   }
   // Funnel with company band.
   const funnel = new THREE.Mesh(new THREE.BoxGeometry(9, 13, 14), plain(0x2b3440, 0.55, 0.3));
@@ -225,6 +317,14 @@ export function buildShip() {
   const funnelBand = new THREE.Mesh(new THREE.BoxGeometry(9.3, 3.4, 14.3), plain(0x2e6da4, 0.5, 0.2));
   funnelBand.position.set(0, SHIP.deckY + 21.5, 154);
   group.add(funnelBand);
+  const funnelCap = new THREE.Mesh(new THREE.BoxGeometry(8.6, 1.0, 13.4), plain(0x11151a, 0.8, 0.1));
+  funnelCap.position.set(0, SHIP.deckY + 24.0, 154);
+  group.add(funnelCap);
+  for (const px of [-2.2, 2.2]) {
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 2.2, 8), plain(0x3a424a, 0.5, 0.5));
+    exhaust.position.set(px, SHIP.deckY + 25.2, 154);
+    group.add(exhaust);
+  }
   // Main mast + rotating radar.
   const mainMast = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 12, 8), mastMat);
   mainMast.position.set(0, SHIP.bridgeY + 8.5, 126);
@@ -287,14 +387,20 @@ export function buildShip() {
   addNav('port', 0xff2a1e, -29.8, SHIP.bridgeY + 1.4, 122);
   addNav('stbd', 0x1eff6a, 29.8, SHIP.bridgeY + 1.4, 122);
   addNav('stern', 0xfff2cf, 0, SHIP.deckY + 5.5, 164);
-  // Deck floodlight pools (emissive strips, bloom does the rest at night).
+  // Deck floodlight masts: visible poles whose heads carry the night glow,
+  // placed where main.js anchors its three warm point lights.
   const floodMat = new THREE.MeshStandardMaterial({
     color: 0x222222, emissive: 0xffd9a0, emissiveIntensity: 0,
   });
-  for (const fz of [-120, -60, 0, 60]) {
-    const fl = new THREE.Mesh(new THREE.BoxGeometry(50, 0.18, 0.5), floodMat);
-    fl.position.set(0, SHIP.deckY + 6.2, fz);
-    group.add(fl);
+  for (const fz of [-95, -25, 45]) {
+    for (const sx of [-27, 27]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 12, 6), plain(0x8d979f, 0.55, 0.5));
+      pole.position.set(sx, SHIP.deckY + 6.2, fz);
+      group.add(pole);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.45, 0.7), floodMat);
+      head.position.set(sx, SHIP.deckY + 12.3, fz);
+      group.add(head);
+    }
   }
 
   group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });

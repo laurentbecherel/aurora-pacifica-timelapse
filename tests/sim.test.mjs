@@ -83,7 +83,8 @@ const openShip = shipAt(openDay);
 const openSun = sunPosition(openMs, openShip.lat, openShip.lon);
 const relAz = Math.abs(((openSun.azimuthDeg - openShip.headingDeg + 540) % 360) - 180);
 console.log(`  day ${openDay} ship ${openShip.lat.toFixed(2)}N ${openShip.lon.toFixed(2)}E hdg ${openShip.headingDeg.toFixed(0)} | sun el ${openSun.elevationDeg.toFixed(1)} az ${openSun.azimuthDeg.toFixed(0)} (off bow ${relAz.toFixed(0)} deg)`);
+ok(openDay < 1, 'opening drops in on the first day of the voyage');
 ok(openSun.elevationDeg > 1 && openSun.elevationDeg < 16, 'opening is golden hour, not midday/night');
-ok(relAz < 28, 'opening sun sits near the bow (glitter path ahead)');
+ok(relAz < 85, 'opening sun is forward of the beam (morning light ahead)');
 
 console.log(`\nALL ${passed} CHECKS PASSED`);
